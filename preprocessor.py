@@ -1,18 +1,14 @@
-#
-#   @date:  [TODO: Today's date]
-#   @author: [TODO: Student Names]
-#
-# This file is for the solutions of the wet part of HW2 in
-# "Concurrent and Distributed Programming for Data processing
-# and Machine Learning" course (02360370), Winter 2024
-#
 import multiprocessing
-from scipy import ndimage
+from multiprocessing import JoinableQueue, Queue, Process
+from typing import Tuple
 import numpy as np
+from scipy import ndimage
 
-class Worker(multiprocessing.Process):
 
-    def __init__(self, jobs, result, training_data, batch_size):
+class Worker(Process):
+
+    def __init__(self, jobs: JoinableQueue, result: Queue, training_data: Tuple[np.ndarray, np.ndarray],
+                 batch_size: int):
         super().__init__()
 
         ''' Initialize Worker and it's members.
@@ -27,7 +23,7 @@ class Worker(multiprocessing.Process):
 			A tuple of (training images array, image lables array)
 		batch_size:
 			workers batch size of images (mini batch size)
-        
+
         You should add parameters if you think you need to.
         '''
         self.jobs = jobs
@@ -37,7 +33,7 @@ class Worker(multiprocessing.Process):
 
 
     @staticmethod
-    def rotate(image, angle):
+    def rotate(image: np.ndarray, angle: int):
         '''Rotate given image to the given angle
 
         Parameters
@@ -46,16 +42,15 @@ class Worker(multiprocessing.Process):
             An array of size 784 of pixels
         angle : int
             The angle to rotate the image
-            
+
         Return
         ------
         An numpy array of same shape
         '''
-
-        temp_image = image.reshape(28, 28)
-        rotated_img = ndimage.rotate(temp_image, angle, reshape=False)
-
-        return rotated_img.reshape(784, 1)
+        image = image.reshape((28, 28))
+        image = ndimage.rotate(image, angle, reshape=False)
+        image = image.reshape(784)
+        return image
 
     @staticmethod
     def shift(image, dx, dy):
@@ -69,22 +64,21 @@ class Worker(multiprocessing.Process):
             The number of pixels to move in the x-axis
         dy : int
             The number of pixels to move in the y-axis
-            
+
         Return
         ------
         An numpy array of same shape
         '''
-
-        temp_image = image.reshape(28, 28)
-        shifted_image = ndimage.shift(temp_image, (dx, dy), mode='nearest', cval=0.0)
-
-        return shifted_image.reshape(784, 1)
+        image = image.reshape((28, 28))
+        image = ndimage.shift(image, (dx, dy), mode='nearest', cval=0.0)
+        image = image.reshape(784)
+        return image
 
     @staticmethod
     def add_noise(image, noise):
         '''Add noise to the image
-        for each pixel a value is selected uniformly from the 
-        range [-noise, noise] and added to it. 
+        for each pixel a value is selected uniformly from the
+        range [-noise, noise] and added to it.
 
         Parameters
         ----------
@@ -97,19 +91,16 @@ class Worker(multiprocessing.Process):
         ------
         An numpy array of same shape
         '''
-
-        temp_image = image.reshape(28, 28)
-        random_noise = np.random.uniform(-noise, noise, size=temp_image.shape)
-        noisy_image = temp_image + random_noise
-        noisy_image = np.clip(noisy_image, 0, 255)
-
-        return noisy_image.flatten()
+        noise = np.random.uniform(low=-noise, high=noise, size=(image.shape))
+        image += noise  # In-Place
+        image[image > 1] = 1.0
+        image[image < 0] = 0.0
+        return image
 
     @staticmethod
     def skew(image, tilt):
         '''Skew the image
-        By doing : result[i][j] = image[i][j + i*tilt]
-        values out of range are treated as 0
+
         Parameters
         ----------
         image : numpy array
@@ -121,14 +112,15 @@ class Worker(multiprocessing.Process):
         ------
         An numpy array of same shape
         '''
-        image = image.reshape(28, 28)
-        skewed_image = np.zeros_like(image)
 
-        for i in range(image.shape[0]):
-            shifted_column = np.roll(image[:, i], int(i * tilt))
-            skewed_image[:, i] = shifted_column
-
-        return skewed_image.flatten()
+        image = image.reshape((28, 28))
+        image_ = np.zeros_like(image)
+        for row in range(28):
+            for col in range(28):
+                if int(col + row * tilt) < 28:
+                    image_[row, col] = image[row, int(col + row * tilt)]
+        image_ = image_.reshape((784))
+        return image_
 
     def process_image(self, image):
         '''Apply the image process functions
@@ -143,21 +135,14 @@ class Worker(multiprocessing.Process):
         ------
         An numpy array of same shape
         '''
-        angle = np.random.uniform(-10, 10)
-        image = self.rotate(image, int(angle))
-
-        # Apply shifting
-        dx = np.random.randint(-5, 5)
-        dy = np.random.randint(-5, 5)
-        image = self.shift(image, dx, dy)
-
-        # Apply adding noise
-        noise = np.random.uniform(0, 10)
-        image = self.add_noise(image, noise)
-
-        # Apply skewing
-        tilt = np.random.uniform(-0.05, 0.05)
+        noise_bound = np.random.uniform(0.0, 0.2)  # up to 20% noise
+        image = self.add_noise(image, noise_bound)
+        angle = np.random.randint(-20,20)  # up to +-30 degrees - we don't want to rotate too much to avoid loosing the semantic meaning (a.k.a "sky is up")
+        image = self.rotate(image, angle)
+        tilt = np.random.uniform(-0.15, 0.15)
         image = self.skew(image, tilt)
+        shift = np.random.randint(0,1)  # up to 3 pixels shift - the entire image is 28x28, we don't want to loose all information
+        image = self.shift(image, shift, shift)
 
         return image
 
@@ -166,7 +151,6 @@ class Worker(multiprocessing.Process):
 		Hint: you can either generate (i.e sample randomly from the training data)
 		the image batches here OR in ip_network.create_batches
         '''
-
         while True:
             next_job = self.jobs.get()
             if next_job is None:

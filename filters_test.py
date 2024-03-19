@@ -72,21 +72,42 @@ def corr_comparison():
 
     def correlation_cpu(kernel, image):
         return convolve2d(image, kernel, mode='same')
+    
+    # cpu_time_3x3 = timer(shapen_kernel, correlation_cpu)
+    # numba_time_3x3 = timer(shapen_kernel, correlation_numba)
+    # gpu_time_3x3 = timer(shapen_kernel, correlation_gpu)
+    # print('CPU 3X3 kernel:', cpu_time_3x3)
+    # print('Numba 3X3 kernel:', numba_time_3x3)
+    # print('CUDA 3X3 kernel:', gpu_time_3x3)
+    # print("---------------------------------------------")
+    #
+    # cpu_time_5x5 = timer(blur_kernel, correlation_cpu)
+    # numba_time_5x5 = timer(blur_kernel, correlation_numba)
+    # gpu_time_5x5 = timer(blur_kernel, correlation_gpu)
+    # print('CPU 5X5 kernel:', cpu_time_5x5)
+    # print('Numba 5X5 kernel:', numba_time_5x5)
+    # print('CUDA 5X5 kernel:', gpu_time_5x5)
+    # print("---------------------------------------------")
+    #
+    # cpu_time_7x7 = timer(flipped_edge_kernel, correlation_cpu)
+    # numba_time_7x7 = timer(edge_kernel, correlation_numba)
+    # gpu_time_7x7 = timer(edge_kernel, correlation_gpu)
+    # print('CPU 7X7 kernel:', cpu_time_7x7)
+    # print('Numba 7X7 kernel:', numba_time_7x7)
+    # print('CUDA 7X7 kernel:', gpu_time_7x7)
+    #
+    # print("---------------------------------------------")
+    # print('scipy-Numba 3x3 kernel speedup: ', cpu_time_3x3 / numba_time_3x3)
+    # print('scipy-GPU 3x3 kernel speedup: ', cpu_time_3x3 / gpu_time_3x3)
+    # print("---------------------------------------------")
+    #
+    # print('scipy-Numba 5x5 kernel speedup: ', cpu_time_5x5 / numba_time_5x5)
+    # print('scipy-GPU 5x5 kernel speedup: ', cpu_time_5x5 / gpu_time_5x5)
+    # print("---------------------------------------------")
+    # print('scipy-Numba 7x7 kernel speedup: ', cpu_time_7x7 / numba_time_7x7)
+    # print('scipy-GPU 7x7 kernel speedup: ', cpu_time_7x7 / gpu_time_7x7)
+    # print("---------------------------------------------")
 
-    print('CPU 3X3 kernel:', timer(shapen_kernel, correlation_cpu))
-    print('Numba 3X3 kernel:', timer(shapen_kernel, correlation_numba))
-    print('CUDA 3X3 kernel:', timer(shapen_kernel, correlation_gpu))
-    print("---------------------------------------------")
-    
-    print('CPU 5X5 kernel:', timer(blur_kernel, correlation_cpu))
-    print('Numba 5X5 kernel:', timer(blur_kernel, correlation_numba))
-    print('CUDA 5X5 kernel:', timer(blur_kernel, correlation_gpu))
-    print("---------------------------------------------")
-    
-    print('CPU 7X7 kernel:', timer(flipped_edge_kernel, correlation_cpu))
-    print('Numba 7X7 kernel:', timer(edge_kernel, correlation_numba))
-    print('CUDA 7X7 kernel:', timer(edge_kernel, correlation_gpu))
-    print("---------------------------------------------")
 
 
 if __name__ == '__main__':
@@ -94,5 +115,14 @@ if __name__ == '__main__':
     os.environ['NUMBAPRO_LIBDEVICE'] = '/usr/local/cuda-9.0/nvvm/libdevice/'
     corr_comparison()
 
-    res = sobel_operator()
-    show_image(res)
+    res_ker1 = sobel_kernel_first()
+    show_image(res_ker1)
+
+    res_ker2 = sobel_kernel_second()
+    show_image(res_ker2)
+
+    res_ker3 = sobel_kernel_third()
+    show_image(res_ker3)
+
+    # res_cpu = sobel_operator_cpu_conv()
+    # show_image(res_cpu)

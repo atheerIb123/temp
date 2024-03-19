@@ -1,19 +1,12 @@
-#
-#   @date:  [TODO: Today's date]
-#   @author: [TODO: Student Names]
-#
-# This file is for the solutions of the wet part of HW2 in
-# "Concurrent and Distributed Programming for Data processing
-# and Machine Learning" course (02360370), Winter 2024
-#
-import matplotlib.pyplot as plt
-import math
 import os
 import sys
+import math
+import time
+import matplotlib.pyplot as plt
 
 from network import *
 from preprocessor import *
-from multiprocessing import JoinableQueue, Queue
+from my_queue import MyQueue
 
 
 def plot_minibatch(data, labels, indices, batch_size, k):
@@ -30,18 +23,19 @@ def plot_minibatch(data, labels, indices, batch_size, k):
     plt.show()
     fig.savefig(f'original_minibatch{k}')
 
+
 class IPNeuralNetwork(NeuralNetwork):
 
     def fit(self, training_data, validation_data=None):
         '''
         Override this function to create and destroy workers
         '''
-        # 1. Create Workers
-        # (Call Worker() with self.mini_batch_size as the batch_size)
         self.jobs = JoinableQueue()
         self.result = Queue()
-        # 2. Set jobs
-        workers = [ Worker(self.jobs, self.result, training_data, self.mini_batch_size) for i in range(int(os.environ['SLURM_CPUS_PER_TASK'])) ]
+
+        self.num_workers = int(os.environ['SLURM_CPUS_PER_TASK'])
+        print(self.num_workers)
+        workers = [Worker(self.jobs, self.result, training_data, self.mini_batch_size) for i in range(self.num_workers)]
 
         for w in workers:
             w.start()
@@ -49,27 +43,26 @@ class IPNeuralNetwork(NeuralNetwork):
         # Call the parent's fit. Notice how create_batches is called inside super.fit().
         super().fit(training_data, validation_data)
 
-        # 3. Stop Workers
-        for _ in range(int(os.environ['SLURM_CPUS_PER_TASK'])):
+        for _ in range(self.num_workers):
             self.jobs.put(None)
 
         self.jobs.join()
 
         [w.join() for w in workers]
 
-        def create_batches(self, data, labels, batch_size):
-            '''
-            Override this function to return self.number_of_batches batches created by workers
-            Hint: you can either generate (i.e sample randomly from the training data) the image batches here OR in Worker.run()
-            '''
-            for k in range(self.number_of_batches):
-                indices = random.sample(range(0, data.shape[0]), batch_size)
+    def create_batches(self, data, labels, batch_size):
+        '''
+        Override this function to return self.number_of_batches batches created by workers
+		Hint: you can either generate (i.e sample randomly from the training data) the image batches here OR in Worker.run()
+        '''
+        for k in range(self.number_of_batches):
+            indices = random.sample(range(0, data.shape[0]), batch_size)
 
-                job = {'batch ID': k, 'indices ID': indices}
-                self.jobs.put(job)
+            job = {'batch ID': k, 'indices ID': indices}
+            self.jobs.put(job)
 
-            batches = []
-            for k in range(self.number_of_batches):
-                batches.append(self.result.get())
+        batches = []
+        for k in range(self.number_of_batches):
+            batches.append(self.result.get())
 
-            return batches
+        return batches

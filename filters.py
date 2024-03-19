@@ -1,19 +1,15 @@
-#
-#   @date:  [TODO: Today's date]
-#   @author: [TODO: Student Names]
-#
-# This file is for the solutions of the wet part of HW2 in
-# "Concurrent and Distributed Programming for Data processing
-# and Machine Learning" course (02360370), Winter 2024
-#
-import pickle
-from numba import cuda
-import numba
-from numba import njit, prange
 import math
+import os
+import pickle
+import timeit
+import numba
+from numba import cuda
+from numba import njit, prange
 import imageio
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.signal import convolve2d
+
 
 def correlation_gpu(kernel, image):
     '''Correlate using gpu
@@ -23,82 +19,73 @@ def correlation_gpu(kernel, image):
         A small matrix
     image : numpy array
         A larger matrix of the image pixels
-            
+
     Return
     ------
     An numpy array of same shape as image
     '''
-    # Get the dimensions of the kernel and the image
-    M, N = image.shape
-    m, n = kernel.shape
+    global m
+    global n
 
-    # Calculate the padding required for valid correlation
-    mpad = m // 2
-    npad = n // 2
+    m = kernel.shape[0]
+    n = kernel.shape[1]
 
-    # Define the thread block dimensions
-    threads_per_block = (32, 32)  # Adjust according to your GPU architecture
+    mpad = int(m / 2)
+    npad = int(n / 2)
 
-    # Calculate the grid dimensions
-    blocks_x_axis = math.ceil(M / threads_per_block[0])
-    blocks_y_axis = math.ceil(N / threads_per_block[1])
-    blocks = (blocks_x_axis, blocks_y_axis)
+    blocks_in_grid = (math.ceil(image.shape[0] / 28), math.ceil(image.shape[1] / 28))
 
-    # Pad the image
-    image_padded = np.pad(image, ((mpad, mpad), (npad, npad)), mode='constant')
+    image = np.pad(image, ((mpad, mpad), (npad, npad)))
 
-    # Allocate device memory
     kernel_cuda = cuda.to_device(kernel)
-    image_cuda = cuda.to_device(image_padded)
-    output_cuda = cuda.device_array((M, N), dtype=np.float32)
+    image_cuda = cuda.to_device(image)
+    output_cuda = cuda.device_array((image.shape[0], image.shape[1]), dtype=image.dtype)
 
-    # Launch the CUDA kernel
-    correlation_cuda_kernel[blocks, threads_per_block](kernel_cuda, image_cuda, output_cuda)
+    correlation_cuda_kernel[blocks_in_grid, (28, 28)](kernel_cuda, image_cuda, output_cuda)
 
-    # Copy the result back to the host
     output = output_cuda.copy_to_host()
 
     return output
 
+
 @cuda.jit
 def correlation_cuda_kernel(kernel, image, output):
-    x, y = cuda.grid(2)
+    i, j = cuda.grid(2)
 
     tidx = cuda.threadIdx.x
     tidy = cuda.threadIdx.y
 
-    rows = kernel.shape[0]
-    cols = kernel.shape[1]
+    shared_kernel_arr = cuda.shared.array(shape=(m, n), dtype=numba.float64)
 
-    print(rows, cols)
-
-    sK = cuda.shared.array(shape=(rows, cols), dtype=np.float64)
-
-    if tidx < kernel.shape[0] and tidy < kernel.shape[1]:  # first <m>X<n> threads copies the kernel to shmem as well
-        sK[tidx, tidy] = kernel[tidx, tidy]
+    if tidx < m and tidy < n:
+        shared_kernel_arr[tidx, tidy] = kernel[tidx, tidy]
 
     cuda.syncthreads()
 
-    sI = cuda.shared.array(shape=(32, 32), dtype=np.float64)
+    shared_image_arr = cuda.shared.array(shape=(28, 28), dtype=numba.float64)
 
-    mpad = kernel.shape[0] // 2
-    npad = kernel.shape[1] // 2
+    mpad = int(m / 2)
+    npad = int(n / 2)   
 
-    sI[tidx, tidy] = image[x + mpad, y + npad]  # Each thread copies one pixel to shmem
+    shared_image_arr[tidx, tidy] = image[i + mpad, j + npad]
 
     cuda.syncthreads()
 
-    if x >= output.shape[0] or y >= output.shape[1]:
+    if i >= output.shape[0] or j >= output.shape[1]:
         return
 
-    for xx in range(-math.floor(kernel.shape[0] / 2), math.ceil(kernel.shape[0] / 2)):
-        for yy in range(-math.floor(kernel.shape[1] / 2), math.ceil(kernel.shape[1] / 2)):
-            if tidx + xx > 0 and tidx + xx < sI.shape[0] and tidy + yy > 0 and tidy + yy < sI.shape[1]:
-                output[x, y] += sK[int(xx + math.floor(kernel.shape[0] / 2)), int(yy + math.floor(kernel.shape[1] / 2))] * sI[
-                    int(tidx + xx), int(tidy + yy)]
+    for x in range(-(m // 2), (m + 1) // 2):
+        for y in range(-(n // 2), (n + 1) // 2):
+            if tidx + x > 0 and tidx + x < shared_image_arr.shape[0] and tidy + y > 0 and tidy + y < \
+                    shared_image_arr.shape[1]:
+                current_val = shared_kernel_arr[int(x + math.floor(m / 2)), int(y + math.floor(n / 2))]
+                current_val *= shared_image_arr[int(tidx + x), int(tidy + y)]
+                output[i, j] += current_val
             else:
-                output[x, y] += sK[int(xx + math.floor(kernel.shape[0] / 2)), int(yy + math.floor(kernel.shape[1] / 2))] * image[
-                    int(x + xx) + mpad, int(y + yy) + npad]
+                current_val = shared_kernel_arr[int(x + math.floor(m / 2)), int(y + math.floor(n / 2))]
+                current_val *= image[int(i + x) + mpad, int(j + y) + npad]
+                output[i, j] += current_val
+
 
 @njit
 def correlation_numba(kernel, image):
@@ -109,11 +96,12 @@ def correlation_numba(kernel, image):
         A small matrix
     image : numpy array
         A larger matrix of the image pixels
-            
+
     Return
     ------
     An numpy array of same shape as image
     '''
+
     kernel_rows, kernel_cols = kernel.shape
     image_rows, image_cols = image.shape
 
@@ -136,6 +124,7 @@ def correlation_numba(kernel, image):
 
     return result
 
+
 def sobel_operator():
     '''Load the image and perform the operator
         ----------
@@ -144,15 +133,49 @@ def sobel_operator():
         An numpy array of the image
         '''
     pic = load_image()
-    # your calculations
+    values = [[1, 0, -1], [2, 0, -2], [1, 0, -1]]
+    sobel_filter = np.array(values)
+    G_x = correlation_numba(sobel_filter, pic)
+    G_y = correlation_numba(np.transpose(sobel_filter), pic)
 
-    raise NotImplementedError("To be implemented")
 
+    result = np.zeros((G_x.shape[0], G_x.shape[1]))
+    for i in range(int(G_x.shape[0])):
+        for j in range(int(G_x.shape[1])):
+            result[i, j] = np.sqrt(((G_x[i, j] ** 2) + (G_y[i, j] ** 2)))
 
-def load_image(): 
+    return result
+
+def sobel_kernel_first():
+    kernel = [[3, 0, -3], [10, 0, -10], [3, 0, -3]]
+    return correlation_numba(np.array(kernel), load_image())
+
+def sobel_kernel_second():
+    kernel = np.array([[1, 0, -1], [2, 0, -1], [1, 0, -2], [2, 0 , -2], [1, 0, -1]])
+    return correlation_numba(kernel, load_image())
+
+def sobel_kernel_third():
+    kernel = np.array([[1, 1, -1], [1, 0, 1], [1, 1, 1]])
+    return correlation_numba(kernel, load_image())
+
+# def sobel_operator_cpu_conv():
+#     pic = load_image()
+#     values = [[1, 0, -1], [2, 0, -2], [1, 0, -1]]
+#     sobel_filter = np.array(values)
+#     G_x = convolve2d(pic, sobel_filter, mode='same')
+#     G_y = convolve2d(pic, np.transpose(sobel_filter), mode='same')
+#
+#     result = np.zeros((G_x.shape[0], G_x.shape[1]))
+#     for i in range(int(G_x.shape[0])):
+#         for j in range(int(G_x.shape[1])):
+#             result[i, j] = np.sqrt(((G_x[i, j] ** 2) + (G_y[i, j] ** 2)))
+#
+#     return result
+
+def load_image():
     fname = 'data/image.jpg'
     pic = imageio.imread(fname)
-    to_gray = lambda rgb : np.dot(rgb[... , :3] , [0.299 , 0.587, 0.114])
+    to_gray = lambda rgb: np.dot(rgb[..., :3], [0.299, 0.587, 0.114])
     gray_pic = to_gray(pic)
     return gray_pic
 
